@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Order Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    .app { max-width: 1200px; margin: 0 auto; }
+
+    /* ── Reconnect Banner ── */
+    #reconnect-banner {
+      display: none;
+      background: #7f1d1d;
+      border: 1px solid #ef4444;
+      border-radius: .6rem;
+      padding: .65rem 1.2rem;
+      margin-bottom: 1rem;
+      font-size: .85rem;
+      font-weight: 600;
+      color: #fca5a5;
+      align-items: center;
+      gap: .6rem;
+      animation: fadeInDown .3s ease-out;
+    }
+    #reconnect-banner.show { display: flex; }
+    @keyframes fadeInDown {
+      from { opacity: 0; transform: translateY(-8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .spinner {
+      width: 14px; height: 14px;
+      border: 2px solid #fca5a544;
+      border-top-color: #fca5a5;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.5rem;
+    }
+    h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; }
+    h1 span { color: #6366f1; }
+
+    #conn-badge {
+      display: flex; align-items: center; gap: .5rem;
+      padding: .35rem .85rem; border-radius: 9999px;
+      font-size: .8rem; font-weight: 600;
+      background: #1e293b; border: 1px solid #334155;
+      transition: all .3s;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #64748b; transition: background .3s; }
+    #conn-badge.connected    .dot { background: #22c55e; box-shadow: 0 0 6px #22c55e88; animation: pulse 2s infinite; }
+    #conn-badge.disconnected .dot { background: #ef4444; }
+    @keyframes pulse { 0%,100%{box-shadow:0 0 6px #22c55e88} 50%{box-shadow:0 0 14px #22c55ecc} }
+
+    /* ── Stats Bar ── */
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .stat-card {
+      background: #1e293b; border: 1px solid #334155;
+      border-radius: .75rem; padding: 1.1rem 1.4rem;
+      display: flex; align-items: center; gap: 1rem;
+      transition: transform .2s;
+    }
+    .stat-card:hover { transform: translateY(-2px); }
+    .stat-icon {
+      font-size: 1.5rem; width: 2.8rem; height: 2.8rem;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: .6rem;
+    }
+    .stat-icon.total     { background: #312e8122; }
+    .stat-icon.pending   { background: #78350f22; }
+    .stat-icon.shipped   { background: #1e3a5f22; }
+    .stat-icon.delivered { background: #14532d22; }
+    .stat-value {
+      font-size: 1.6rem; font-weight: 800; line-height: 1;
+      transition: all .3s;
+    }
+    .stat-label { font-size: .7rem; color: #64748b; margin-top: .2rem; text-transform: uppercase; letter-spacing: .05em; }
+    .stat-card.total     .stat-value { color: #a5b4fc; }
+    .stat-card.pending   .stat-value { color: #fbbf24; }
+    .stat-card.shipped   .stat-value { color: #60a5fa; }
+    .stat-card.delivered .stat-value { color: #4ade80; }
+    @keyframes bump { 0%{transform:scale(1.35);opacity:.5} 100%{transform:scale(1);opacity:1} }
+    .stat-value.bump { animation: bump .3s ease-out; }
+
+    /* ── Search & Filter ── */
+    .search-bar {
+      display: flex; gap: .75rem; flex-wrap: wrap;
+      margin-bottom: 1.5rem;
+    }
+    .search-bar input {
+      flex: 1; min-width: 200px;
+      padding: .6rem 1rem;
+      background: #1e293b; color: #e2e8f0;
+      border: 1px solid #334155; border-radius: .6rem;
+      font-size: .875rem;
+    }
+    .search-bar input:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 2px #6366f122; }
+    .filter-btn {
+      padding: .6rem 1.1rem;
+      background: #1e293b; color: #94a3b8;
+      border: 1px solid #334155; border-radius: .6rem;
+      font-size: .8rem; font-weight: 600; cursor: pointer;
+      transition: all .2s; text-transform: capitalize;
+    }
+    .filter-btn:hover  { border-color: #6366f1; color: #e2e8f0; }
+    .filter-btn.active { background: #6366f1; color: #fff; border-color: #6366f1; }
+
+    /* ── Form ── */
+    .form-section {
+      background: #1e293b; border: 1px solid #334155;
+      border-radius: .75rem; padding: 1.25rem 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .form-section h2 { font-size: .95rem; font-weight: 600; margin-bottom: .9rem; color: #94a3b8; }
+    .form-row { display: flex; gap: .75rem; flex-wrap: wrap; }
+    .form-row input, .form-row select {
+      flex: 1; min-width: 150px;
+      padding: .55rem .75rem;
+      background: #0f172a; color: #e2e8f0;
+      border: 1px solid #334155; border-radius: .5rem;
+      font-size: .875rem;
+    }
+    .form-row input:focus, .form-row select:focus { outline: none; border-color: #6366f1; }
+    .btn-add {
+      padding: .55rem 1.25rem;
+      background: #6366f1; color: #fff;
+      border: none; border-radius: .5rem;
+      font-size: .875rem; font-weight: 600;
+      cursor: pointer; transition: background .2s, transform .1s;
+    }
+    .btn-add:hover  { background: #4f46e5; }
+    .btn-add:active { transform: scale(.97); }
+
+    /* ── Cards Grid ── */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 1rem; margin-bottom: 1.5rem;
+    }
+
+    .card {
+      background: #1e293b; border: 1px solid #334155;
+      border-radius: .75rem; padding: 1.25rem 1.5rem;
+      transition: transform .2s, box-shadow .2s, opacity .3s;
+      position: relative; overflow: hidden;
+    }
+    .card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px #0004; }
+    @keyframes flashCard { 0%{background:#312e81;border-color:#6366f1} 100%{background:#1e293b;border-color:#334155} }
+    .card.flash { animation: flashCard .9s ease-out forwards; }
+    @keyframes fadeOutCard { to { opacity: 0; transform: scale(.95); } }
+    .card.deleting { animation: fadeOutCard .35s ease-out forwards; }
+
+    .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: .75rem; }
+    .order-id { font-size: .72rem; color: #64748b; font-weight: 600; }
+    .customer { font-size: 1rem; font-weight: 600; margin-top: .15rem; }
+    .product  { font-size: .875rem; color: #94a3b8; margin-top: .2rem; }
+
+    .badge {
+      font-size: .68rem; font-weight: 700;
+      padding: .25rem .65rem; border-radius: 9999px;
+      text-transform: uppercase; letter-spacing: .05em; white-space: nowrap;
+    }
+    .badge.pending   { background: #78350f22; color: #fbbf24; border: 1px solid #92400e; }
+    .badge.shipped   { background: #1e3a5f22; color: #60a5fa; border: 1px solid #1e40af; }
+    .badge.delivered { background: #14532d22; color: #4ade80; border: 1px solid #15803d; }
+
+    /* ── Status progression stepper ── */
+    .status-stepper {
+      display: flex; align-items: center; gap: 0;
+      margin: .85rem 0 .6rem;
+    }
+    .step {
+      display: flex; flex-direction: column; align-items: center;
+      flex: 1; position: relative; cursor: default;
+    }
+    .step-circle {
+      width: 28px; height: 28px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .7rem; font-weight: 700;
+      border: 2px solid #334155; background: #0f172a;
+      color: #475569; transition: all .3s; position: relative; z-index: 1;
+    }
+    .step.done   .step-circle { background: #4ade8022; border-color: #4ade80; color: #4ade80; }
+    .step.active .step-circle { background: #6366f133; border-color: #6366f1; color: #a5b4fc; box-shadow: 0 0 10px #6366f155; }
+    .step-label { font-size: .6rem; margin-top: .3rem; color: #475569; text-transform: uppercase; letter-spacing: .04em; }
+    .step.done   .step-label { color: #4ade80; }
+    .step.active .step-label { color: #a5b4fc; }
+
+    /* connector line */
+    .step-line {
+      height: 2px; flex: 1; background: #334155;
+      margin-bottom: 1rem; transition: background .3s;
+    }
+    .step-line.done { background: #4ade80; }
+
+    /* advance button */
+    .btn-advance {
+      width: 100%; padding: .45rem;
+      background: #6366f133; color: #a5b4fc;
+      border: 1px solid #6366f155; border-radius: .5rem;
+      font-size: .78rem; font-weight: 600; cursor: pointer;
+      transition: background .2s;
+    }
+    .btn-advance:hover   { background: #6366f155; }
+    .btn-advance:disabled {
+      opacity: .35; cursor: not-allowed;
+      background: transparent; color: #475569; border-color: #334155;
+    }
+
+    .card-footer { margin-top: .6rem; display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+    .updated-at  { font-size: .7rem; color: #475569; }
+    .btn-delete {
+      font-size: .75rem; padding: .3rem .7rem;
+      background: transparent; color: #ef4444;
+      border: 1px solid #7f1d1d; border-radius: .4rem;
+      cursor: pointer; transition: background .2s;
+    }
+    .btn-delete:hover { background: #7f1d1d44; }
+
+    /* ── Bottom row ── */
+    .bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .panel { background: #1e293b; border: 1px solid #334155; border-radius: .75rem; overflow: hidden; }
+    .panel-header {
+      padding: .8rem 1.2rem; border-bottom: 1px solid #334155;
+      font-size: .85rem; font-weight: 600; color: #94a3b8;
+      display: flex; align-items: center; gap: .5rem;
+    }
+
+    #timeline { padding: .75rem 1.2rem; height: 220px; overflow-y: auto; }
+    .tl-item {
+      display: flex; gap: .75rem; padding: .5rem 0;
+      border-bottom: 1px solid #0f172a; align-items: flex-start;
+      animation: slideIn .3s ease-out;
+    }
+    @keyframes slideIn { from{opacity:0;transform:translateX(-10px)} to{opacity:1;transform:translateX(0)} }
+    .tl-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: .35rem; flex-shrink: 0; }
+    .tl-dot.INSERT   { background: #4ade80; box-shadow: 0 0 6px #4ade8088; }
+    .tl-dot.UPDATE   { background: #60a5fa; box-shadow: 0 0 6px #60a5fa88; }
+    .tl-dot.DELETE   { background: #f87171; box-shadow: 0 0 6px #f8717188; }
+    .tl-body { flex: 1; }
+    .tl-msg  { font-size: .8rem; line-height: 1.4; }
+    .tl-time { font-size: .68rem; color: #475569; margin-top: .15rem; }
+
+    #event-log {
+      padding: .75rem 1rem; height: 220px; overflow-y: auto;
+      font-family: 'Courier New', monospace; font-size: .75rem; background: #0f172a;
+    }
+    .log-entry { padding: .18rem 0; line-height: 1.5; }
+    .log-entry .ts { color: #475569; }
+    .log-entry .op { font-weight: 700; }
+    .op.INSERT { color: #4ade80; }
+    .op.UPDATE { color: #60a5fa; }
+    .op.DELETE { color: #f87171; }
+
+    /* ── Delete confirm modal ── */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: #00000088; backdrop-filter: blur(3px);
+      align-items: center; justify-content: center; z-index: 100;
+    }
+    .modal-overlay.show { display: flex; }
+    .modal {
+      background: #1e293b; border: 1px solid #334155;
+      border-radius: 1rem; padding: 2rem; max-width: 360px; width: 90%;
+      animation: popIn .2s ease-out;
+    }
+    @keyframes popIn { from{transform:scale(.9);opacity:0} to{transform:scale(1);opacity:1} }
+    .modal h3 { font-size: 1.1rem; font-weight: 700; margin-bottom: .5rem; }
+    .modal p  { font-size: .875rem; color: #94a3b8; margin-bottom: 1.5rem; line-height: 1.5; }
+    .modal-btns { display: flex; gap: .75rem; justify-content: flex-end; }
+    .btn-cancel  { padding: .5rem 1.1rem; background: #334155; color: #e2e8f0; border: none; border-radius: .5rem; cursor: pointer; font-size: .875rem; }
+    .btn-confirm { padding: .5rem 1.1rem; background: #ef4444; color: #fff; border: none; border-radius: .5rem; cursor: pointer; font-size: .875rem; font-weight: 600; }
+    .btn-confirm:hover { background: #dc2626; }
+
+    .empty { grid-column: 1/-1; text-align: center; color: #475569; padding: 3rem; }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 9999px; }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Reconnect Banner -->
+  <div id="reconnect-banner">
+    <div class="spinner"></div>
+    <span>Connection lost — attempting to reconnect…</span>
+  </div>
+
+  <!-- Header -->
+  <header>
+    <h1>Order <span>Live</span> Dashboard</h1>
+    <div id="conn-badge" class="disconnected">
+      <div class="dot"></div>
+      <span id="conn-label">Connecting…</span>
+    </div>
+  </header>
+
+  <!-- Stats Bar -->
+  <div class="stats-bar">
+    <div class="stat-card total">
+      <div class="stat-icon total">📦</div>
+      <div class="stat-info">
+        <div class="stat-value" id="stat-total">0</div>
+        <div class="stat-label">Total Orders</div>
+      </div>
+    </div>
+    <div class="stat-card pending">
+      <div class="stat-icon pending">⏳</div>
+      <div class="stat-info">
+        <div class="stat-value" id="stat-pending">0</div>
+        <div class="stat-label">Pending</div>
+      </div>
+    </div>
+    <div class="stat-card shipped">
+      <div class="stat-icon shipped">🚚</div>
+      <div class="stat-info">
+        <div class="stat-value" id="stat-shipped">0</div>
+        <div class="stat-label">Shipped</div>
+      </div>
+    </div>
+    <div class="stat-card delivered">
+      <div class="stat-icon delivered">✅</div>
+      <div class="stat-info">
+        <div class="stat-value" id="stat-delivered">0</div>
+        <div class="stat-label">Delivered</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Search & Filter -->
+  <div class="search-bar">
+    <input id="search-input" type="text" placeholder="🔍  Search by customer or product…" oninput="renderGrid()" />
+    <button class="filter-btn active" data-filter="all"       onclick="setFilter('all')">All</button>
+    <button class="filter-btn"        data-filter="pending"   onclick="setFilter('pending')">⏳ Pending</button>
+    <button class="filter-btn"        data-filter="shipped"   onclick="setFilter('shipped')">🚚 Shipped</button>
+    <button class="filter-btn"        data-filter="delivered" onclick="setFilter('delivered')">✅ Delivered</button>
+  </div>
+
+  <!-- Add Order Form -->
+  <div class="form-section">
+    <h2>➕ Place New Order</h2>
+    <div class="form-row">
+      <input id="inp-customer" type="text" placeholder="Customer name" />
+      <input id="inp-product"  type="text" placeholder="Product name"  />
+      <button class="btn-add" onclick="createOrder()">Add Order</button>
+    </div>
+  </div>
+
+  <!-- Orders Grid -->
+  <div class="grid" id="orders-grid">
+    <div class="empty">Loading orders…</div>
+  </div>
+
+  <!-- Bottom: Timeline + Log -->
+  <div class="bottom-row">
+    <div class="panel">
+      <div class="panel-header">🕐 Live Activity Timeline</div>
+      <div id="timeline"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">📡 Real-Time Event Log</div>
+      <div id="event-log"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Confirm Modal -->
+<div class="modal-overlay" id="delete-modal">
+  <div class="modal">
+    <h3>🗑️ Delete Order?</h3>
+    <p id="modal-msg">Are you sure you want to delete this order? This action cannot be undone.</p>
+    <div class="modal-btns">
+      <button class="btn-cancel"  onclick="closeModal()">Cancel</button>
+      <button class="btn-confirm" onclick="confirmDelete()">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── State ──────────────────────────────────────────────────────
+  const orders     = {};
+  let   activeFilter  = 'all';
+  let   pendingDelete = null;
+
+  // Status flow — only forward movement allowed
+  const STATUS_FLOW = { pending: 'shipped', shipped: 'delivered', delivered: null };
+  const NEXT_LABEL  = { pending: 'Mark as Shipped →', shipped: 'Mark as Delivered →', delivered: null };
+
+  // ── WebSocket ──────────────────────────────────────────────────
+  let stompClient = null;
+  let reconnectTimer = null;
+
+  function connect() {
+    const socket = new SockJS('/ws');
+    stompClient = Stomp.over(socket);
+    stompClient.debug = null;
+
+    stompClient.connect({}, () => {
+      setConnected(true);
+      stompClient.subscribe('/topic/orders', frame => {
+        handleEvent(JSON.parse(frame.body));
+      });
+    }, () => {
+      setConnected(false);
+      // Auto-reconnect after 3s
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(connect, 3000);
+    });
+  }
+
+  function setConnected(yes) {
+    document.getElementById('conn-badge').className = yes ? 'connected' : 'disconnected';
+    document.getElementById('conn-label').textContent = yes ? 'Live' : 'Disconnected';
+    const banner = document.getElementById('reconnect-banner');
+    if (yes) {
+      banner.classList.remove('show');
+    } else {
+      banner.classList.add('show');
+    }
+  }
+
+  connect();
+
+  // ── Event handler ──────────────────────────────────────────────
+  function handleEvent(event) {
+    appendLog(event);
+    appendTimeline(event);
+    showBrowserNotification(event);
+
+    if (event.operation === 'DELETE') {
+      delete orders[event.id];
+    } else {
+      orders[event.id] = event;
+    }
+
+    renderGrid();
+    updateStats();
+    updateTabTitle();
+
+    if (event.operation !== 'DELETE') {
+      requestAnimationFrame(() => {
+        const card = document.getElementById('card-' + event.id);
+        if (card) {
+          card.classList.remove('flash');
+          void card.offsetWidth;
+          card.classList.add('flash');
+        }
+      });
+    }
+  }
+
+  // ── Initial load ───────────────────────────────────────────────
+  async function loadOrders() {
+    const res  = await fetch('/api/orders');
+    const list = await res.json();
+    list.forEach(o => { orders[o.id] = o; });
+    renderGrid();
+    updateStats();
+    updateTabTitle();
+  }
+
+  // ── Stats ──────────────────────────────────────────────────────
+  function updateStats() {
+    const vals = Object.values(orders);
+    const counts = {
+      total:     vals.length,
+      pending:   vals.filter(o => o.status === 'pending').length,
+      shipped:   vals.filter(o => o.status === 'shipped').length,
+      delivered: vals.filter(o => o.status === 'delivered').length,
+    };
+    ['total','pending','shipped','delivered'].forEach(k => {
+      const el = document.getElementById('stat-' + k);
+      if (el.textContent !== String(counts[k])) {
+        el.textContent = counts[k];
+        el.classList.remove('bump');
+        void el.offsetWidth;
+        el.classList.add('bump');
+      }
+    });
+  }
+
+  // ── Tab title badge ────────────────────────────────────────────
+  function updateTabTitle() {
+    const pending = Object.values(orders).filter(o => o.status === 'pending').length;
+    document.title = pending > 0
+      ? `(${pending} pending) Order Dashboard`
+      : 'Order Dashboard';
+  }
+
+  // ── Filter ─────────────────────────────────────────────────────
+  function setFilter(f) {
+    activeFilter = f;
+    document.querySelectorAll('.filter-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.filter === f);
+    });
+    renderGrid();
+  }
+
+  // ── Render grid ────────────────────────────────────────────────
+  function renderGrid() {
+    const grid      = document.getElementById('orders-grid');
+    const searchVal = document.getElementById('search-input').value.trim().toLowerCase();
+
+    let ids = Object.keys(orders)
+      .filter(id => {
+        const o = orders[id];
+        if (activeFilter !== 'all' && o.status !== activeFilter) return false;
+        if (searchVal) {
+          const haystack = (o.customerName + ' ' + o.productName).toLowerCase();
+          if (!haystack.includes(searchVal)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => Number(b) - Number(a));
+
+    if (ids.length === 0) {
+      grid.innerHTML = '<div class="empty">No orders match your filter.</div>';
+      return;
+    }
+
+    grid.innerHTML = ids.map(id => cardHTML(orders[id])).join('');
+  }
+
+  function cardHTML(o) {
+    const ts       = o.updatedAt ? new Date(o.updatedAt).toLocaleString() : '—';
+    const nextStatus = STATUS_FLOW[o.status];
+    const nextLabel  = NEXT_LABEL[o.status];
+    const steps      = ['pending','shipped','delivered'];
+
+    // Build stepper
+    const stepperHTML = steps.map((s, i) => {
+      const idx  = steps.indexOf(o.status);
+      const done   = i < idx;
+      const active = i === idx;
+      const cls    = done ? 'done' : active ? 'active' : '';
+      const lineClass = i < steps.length - 1 ? (i < idx ? 'step-line done' : 'step-line') : '';
+      const icons = ['⏳','🚚','✅'];
+      return `
+        <div class="step ${cls}">
+          <div class="step-circle">${done ? '✓' : icons[i]}</div>
+          <div class="step-label">${s}</div>
+        </div>
+        ${i < steps.length - 1 ? `<div class="${lineClass}"></div>` : ''}`;
+    }).join('');
+
+    return `
+      <div class="card" id="card-${o.id}">
+        <div class="card-header">
+          <div>
+            <div class="order-id">#${o.id}</div>
+            <div class="customer">${esc(o.customerName)}</div>
+            <div class="product">${esc(o.productName)}</div>
+          </div>
+          <span class="badge ${o.status}">${o.status}</span>
+        </div>
+
+        <div class="status-stepper">${stepperHTML}</div>
+
+        <button class="btn-advance"
+          ${!nextStatus ? 'disabled' : ''}
+          onclick="advanceStatus(${o.id}, '${nextStatus}')">
+          ${nextLabel || '✅ Delivered — Order Complete'}
+        </button>
+
+        <div class="card-footer">
+          <span class="updated-at">Updated ${ts}</span>
+          <button class="btn-delete" onclick="askDelete(${o.id}, '${esc(o.customerName)}', '${esc(o.productName)}')">🗑 Delete</button>
+        </div>
+      </div>`;
+  }
+
+  function esc(str) {
+    return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;');
+  }
+
+  // ── Advance status (one direction only!) ───────────────────────
+  async function advanceStatus(id, nextStatus) {
+    if (!nextStatus) return; // already delivered — can't go further
+
+    const current = orders[id]?.status;
+
+    // Double-check: only allow forward transitions
+    const allowed = STATUS_FLOW[current];
+    if (allowed !== nextStatus) {
+      showToast('⚠️ Invalid status transition!', 'error');
+      return;
+    }
+
+    await fetch(`/api/orders/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: nextStatus })
+    });
+  }
+
+  // ── Delete with confirm modal ──────────────────────────────────
+  function askDelete(id, customer, product) {
+    pendingDelete = id;
+    document.getElementById('modal-msg').textContent =
+      `Delete order #${id} — "${product}" for ${customer}? This cannot be undone.`;
+    document.getElementById('delete-modal').classList.add('show');
+  }
+
+  function closeModal() {
+    pendingDelete = null;
+    document.getElementById('delete-modal').classList.remove('show');
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    const id   = pendingDelete;
+    const card = document.getElementById('card-' + id);
+    closeModal();
+
+    // Optimistic: animate card out first
+    if (card) {
+      card.classList.add('deleting');
+      await new Promise(r => setTimeout(r, 340));
+    }
+
+    await fetch(`/api/orders/${id}`, { method: 'DELETE' });
+  }
+
+  // ── Timeline ──────────────────────────────────────────────────
+  function appendTimeline(event) {
+    const tl  = document.getElementById('timeline');
+    const ts  = new Date().toLocaleTimeString();
+    let msg = '';
+    if (event.operation === 'INSERT') {
+      msg = `New order by <strong>${esc(event.customerName)}</strong> — <em>${esc(event.productName)}</em>`;
+    } else if (event.operation === 'UPDATE') {
+      const color = event.status==='pending'?'#fbbf24':event.status==='shipped'?'#60a5fa':'#4ade80';
+      msg = `Order #${event.id} → <span style="color:${color};font-weight:700">${event.status}</span>`;
+    } else {
+      msg = `Order #${event.id} <span style="color:#f87171">deleted</span>`;
+    }
+    const item = document.createElement('div');
+    item.className = 'tl-item';
+    item.innerHTML = `
+      <div class="tl-dot ${event.operation}"></div>
+      <div class="tl-body">
+        <div class="tl-msg">${msg}</div>
+        <div class="tl-time">${ts}</div>
+      </div>`;
+    tl.prepend(item);
+  }
+
+  // ── Browser Notification ───────────────────────────────────────
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+  function showBrowserNotification(event) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    if (document.hasFocus()) return;
+    const map = {
+      INSERT: { title: '📦 New Order!',      body: `${event.customerName} → ${event.productName}` },
+      UPDATE: { title: '🔄 Order Updated',   body: `Order #${event.id} is now ${event.status}` },
+      DELETE: { title: '🗑️ Order Deleted',   body: `Order #${event.id} was removed` },
+    };
+    const n = new Notification(map[event.operation].title, { body: map[event.operation].body });
+    setTimeout(() => n.close(), 4000);
+  }
+
+  // ── Toast (for invalid action feedback) ───────────────────────
+  function showToast(msg, type='info') {
+    const t = document.createElement('div');
+    t.style.cssText = `
+      position:fixed;bottom:1.5rem;right:1.5rem;
+      background:${type==='error'?'#7f1d1d':'#1e293b'};
+      color:${type==='error'?'#fca5a5':'#e2e8f0'};
+      border:1px solid ${type==='error'?'#ef4444':'#334155'};
+      padding:.75rem 1.25rem;border-radius:.6rem;
+      font-size:.85rem;font-weight:600;z-index:200;
+      animation:slideIn .3s ease-out;`;
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+  }
+
+  // ── Event log ─────────────────────────────────────────────────
+  function appendLog(event) {
+    const log = document.getElementById('event-log');
+    const ts  = new Date().toLocaleTimeString();
+    const div = document.createElement('div');
+    div.className = 'log-entry';
+    div.innerHTML = `<span class="ts">[${ts}]</span> `
+      + `<span class="op ${event.operation}">${event.operation}</span> `
+      + `order #${event.id}`
+      + (event.operation !== 'DELETE'
+          ? ` → <strong>${esc(event.customerName)}</strong> · <em>${event.status}</em>`
+          : ' (removed)');
+    log.prepend(div);
+  }
+
+  // ── API ────────────────────────────────────────────────────────
+  async function createOrder() {
+    const customer = document.getElementById('inp-customer').value.trim();
+    const product  = document.getElementById('inp-product').value.trim();
+    if (!customer || !product) { showToast('⚠️ Enter customer and product name.', 'error'); return; }
+    await fetch('/api/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customerName: customer, productName: product, status: 'pending' })
+    });
+    document.getElementById('inp-customer').value = '';
+    document.getElementById('inp-product').value  = '';
+  }
+
+  // Close modal on overlay click
+  document.getElementById('delete-modal').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal();
+  });
+
+  // Enter key → add order
+  ['inp-customer','inp-product'].forEach(id =>
+    document.getElementById(id).addEventListener('keydown', e => {
+      if (e.key === 'Enter') createOrder();
+    })
+  );
+
+  // ── Boot ──────────────────────────────────────────────────────
+  loadOrders();
+</script>
+</body>
+</html>
