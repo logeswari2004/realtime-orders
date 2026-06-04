@@ -1,7 +1,0 @@
-C:\Users\logeswari.elango\realtime-orders\src\main\java\com\orders\controller\OrderController.java
-C:\Users\logeswari.elango\realtime-orders\src\main\java\com\orders\service\OrderRepository.java
-C:\Users\logeswari.elango\realtime-orders\src\main\java\com\orders\listener\PostgresNotifyListener.java
-C:\Users\logeswari.elango\realtime-orders\src\main\java\com\orders\model\OrderEvent.java
-C:\Users\logeswari.elango\realtime-orders\src\main\java\com\orders\config\WebSocketConfig.java
-C:\Users\logeswari.elango\realtime-orders\src\main\java\com\orders\model\Order.java
-C:\Users\logeswari.elango\realtime-orders\src\main\java\com\orders\RealtimeOrdersApplication.java

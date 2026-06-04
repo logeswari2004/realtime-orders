@@ -1,8 +1,0 @@
-com\orders\RealtimeOrdersApplication.class
-com\orders\listener\PostgresNotifyListener.class
-com\orders\model\Order.class
-com\orders\service\OrderRepository.class
-com\orders\controller\OrderController.class
-com\orders\config\WebSocketConfig.class
-com\orders\model\Order$OrderBuilder.class
-com\orders\model\OrderEvent.class
